@@ -70,7 +70,7 @@ app = Flask(
     static_url_path = "",
 )
 
-# Trust one layer of reverse-proxy headers (Render's load balancer)
+# Trust one layer of reverse-proxy headers (Railway's load balancer)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Allow 60 MB total (5 files × 10 MB + multipart overhead + base64 expansion)
@@ -82,7 +82,7 @@ if not _secret_key:
     if _IS_PROD:
         raise RuntimeError(
             "SECRET_KEY must be set in production. "
-            "Add it to your Render environment variables."
+            "Add it to your Railway environment variables."
         )
     _secret_key = secrets.token_hex(32)
     log.warning("SECRET_KEY not set — using a temporary key. Sessions will be lost on restart.")
@@ -118,12 +118,12 @@ _ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 if not _ADMIN_PASSWORD:
     if _IS_PROD:
-        raise RuntimeError("ADMIN_PASSWORD must be set in your Render environment variables.")
+        raise RuntimeError("ADMIN_PASSWORD must be set in your Railway environment variables.")
     _ADMIN_PASSWORD = "changeme_dev_only"
     log.warning("ADMIN_PASSWORD not set — using insecure dev fallback.")
 
 if not _ADMIN_EMAIL and _IS_PROD:
-    raise RuntimeError("ADMIN_EMAIL must be set in your Render environment variables.")
+    raise RuntimeError("ADMIN_EMAIL must be set in your Railway environment variables.")
 
 log.info("Admin: username='%s'  email='%s'", _ADMIN_USERNAME, _ADMIN_EMAIL)
 
@@ -321,7 +321,6 @@ def init_db():
 
     # ── Schema migrations (idempotent) ────────────────────────────────────────
     def _migrate(table: str, column: str, ddl: str):
-        """Add a column if it doesn't already exist."""
         try:
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
             if column not in cols:
@@ -506,7 +505,6 @@ def _do_startup():
             raise
 
 
-# Run at import time so Gunicorn workers all initialise correctly
 _do_startup()
 
 
@@ -546,7 +544,7 @@ _USER_PATCH_FIELDS: Dict[str, Tuple[str, Callable[[str], bool]]] = {
 _SAFE_UPDATE_COLUMNS: frozenset = frozenset({"username", "email", "role", "status"})
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  CSRF helper
+#  CSRF helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _check_csrf() -> Optional[Tuple[Response, int]]:
@@ -587,26 +585,94 @@ def admin_required(fn):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  CSRF cookie
+#  CSRF cookie — set on all HTML page loads
 # ─────────────────────────────────────────────────────────────────────────────
+
+_CSRF_COOKIE_ROUTES = {
+    "/", "/chat", "/login", "/register", "/admin",
+    "/auth/login", "/auth/register", "/feedback",
+}
+
 
 @app.after_request
 def inject_csrf_cookie(resp):
-    if resp.content_type and "text/html" in resp.content_type:
+    """Set CSRF cookie on all page loads so JavaScript can read it."""
+    needs_cookie = (
+        request.path in _CSRF_COOKIE_ROUTES
+        or (resp.content_type and "text/html" in resp.content_type)
+    )
+
+    if needs_cookie:
         resp.set_cookie(
-            "csrf_token", generate_csrf(),
+            "csrf_token",
+            generate_csrf(),
             samesite = "Lax",
             httponly = False,
             secure   = _IS_PROD,
+            path     = "/",
+            max_age  = 7200,
         )
     return resp
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Email
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  EMAIL — Resend HTTP API (Railway-compatible)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+#  Railway and most cloud platforms block outbound SMTP (port 25/465/587)
+#  to prevent spam abuse. We use Resend's HTTP API instead.
+#
+#  Setup:
+#    1. Sign up free at https://resend.com (3,000 emails/month free)
+#    2. Get API key from dashboard
+#    3. Set Railway env vars:
+#         RESEND_API_KEY=re_xxxxxxxxxxxxx
+#         EMAIL_FROM=onboarding@resend.dev    (for testing)
+#         EMAIL_FROM=Jarvis <noreply@yourdomain.com>   (after domain verify)
+#
+#  SMTP fallback is kept for local dev / non-cloud deployments.
+# ═════════════════════════════════════════════════════════════════════════════
 
-def _send_email_raw(to_email: str, subject: str, body: str) -> bool:
+def _send_via_resend(to_email: str, subject: str, body: str,
+                     from_addr: str, api_key: str) -> bool:
+    """Send email via Resend HTTP API."""
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type":  "application/json",
+            },
+            json = {
+                "from":    from_addr,
+                "to":      [to_email],
+                "subject": subject,
+                "text":    body,
+            },
+            timeout = 15,
+        )
+        if resp.status_code in (200, 202):
+            log.info("Email sent via Resend → %s", to_email)
+            return True
+
+        # Parse error response for clearer logging
+        try:
+            err = resp.json()
+            msg = err.get("message") or err.get("error") or str(err)
+        except Exception:
+            msg = resp.text[:200]
+        log.error("Resend API error %d: %s", resp.status_code, msg)
+        return False
+    except requests.Timeout:
+        log.error("Resend API timeout for %s", to_email)
+        return False
+    except Exception as exc:
+        log.exception("Resend error → %s: %s", to_email, exc)
+        return False
+
+
+def _send_via_smtp(to_email: str, subject: str, body: str) -> bool:
+    """Send email via traditional SMTP (Gmail, Outlook, etc.). Blocked on Railway."""
     host = os.environ.get("SMTP_HOST", "").strip()
     port = int(os.environ.get("SMTP_PORT", "465"))
     user = os.environ.get("SMTP_USER", "").strip()
@@ -614,10 +680,6 @@ def _send_email_raw(to_email: str, subject: str, body: str) -> bool:
     frm  = os.environ.get("SMTP_FROM", "").strip() or user
 
     if not host or not user or not pw:
-        log.info("[DEV] Email to %s — %s (SMTP not configured)", to_email, subject)
-        return True
-    if not frm:
-        log.error("SMTP_FROM / SMTP_USER empty — cannot send email")
         return False
 
     msg            = MIMEText(body)
@@ -639,14 +701,57 @@ def _send_email_raw(to_email: str, subject: str, body: str) -> bool:
         else:
             log.error("Unsupported SMTP_PORT=%d (use 465 or 587)", port)
             return False
-        log.info("Email sent to %s", to_email)
+        log.info("Email sent via SMTP → %s", to_email)
         return True
+    except OSError as exc:
+        if exc.errno == 101:
+            log.error(
+                "SMTP is blocked by your network (Railway / most clouds block it). "
+                "Switch to Resend: set RESEND_API_KEY env var. "
+                "Free signup: https://resend.com"
+            )
+        else:
+            log.exception("SMTP error → %s: %s", to_email, exc)
+        return False
     except Exception as exc:
-        log.exception("Email error → %s: %s", to_email, exc)
+        log.exception("SMTP error → %s: %s", to_email, exc)
         return False
 
 
+def _send_email_raw(to_email: str, subject: str, body: str) -> bool:
+    """
+    Send an email. Prefers Resend HTTP API, falls back to SMTP, then dev log.
+
+    Returns:
+        True if sent successfully OR if running in dev mode without any
+        email provider configured. False on actual send failure.
+    """
+    # ── 1. Try Resend (HTTP API — works on Railway/Render/Heroku) ─────────
+    resend_key = os.environ.get("RESEND_API_KEY", "").strip()
+    email_from = (
+        os.environ.get("EMAIL_FROM", "").strip()
+        or "onboarding@resend.dev"
+    )
+
+    if resend_key:
+        return _send_via_resend(to_email, subject, body, email_from, resend_key)
+
+    # ── 2. Try SMTP (works locally / on platforms allowing outbound 465/587) ─
+    smtp_host = os.environ.get("SMTP_HOST", "").strip()
+    if smtp_host:
+        return _send_via_smtp(to_email, subject, body)
+
+    # ── 3. Dev mode — log only ────────────────────────────────────────────
+    log.info(
+        "[DEV] Email to %s — subject: %s\n"
+        "       (No email provider configured. Set RESEND_API_KEY to send real emails.)",
+        to_email, subject,
+    )
+    return True
+
+
 def _send_notification_bg(email: str, subject: str, body: str):
+    """Fire-and-forget email in a background thread."""
     def _w():
         if not email or not VALID_EMAIL_RE.match(email):
             return
@@ -815,27 +920,23 @@ def _save_assistant_reply_conn(conn: sqlite3.Connection, sess_id: str, reply: st
 # ═════════════════════════════════════════════════════════════════════════════
 
 ALLOWED_MIME = {
-    # Images (sent to vision-capable models as base64)
     "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
-    # Documents (text extracted)
     "text/plain", "text/markdown", "text/csv",
     "application/pdf",
     "application/json",
-    # Code files
     "text/x-python", "text/javascript", "application/javascript",
     "text/html", "text/css",
     "text/x-c", "text/x-c++", "text/x-java", "text/x-go", "text/x-rust",
     "text/x-typescript",
 }
 
-MAX_FILE_SIZE  = 10 * 1024 * 1024  # 10 MB per file
-MAX_FILES      = 5                  # per upload request
+MAX_FILE_SIZE  = 10 * 1024 * 1024
+MAX_FILES      = 5
 MAX_PDF_PAGES  = 50
 MAX_TEXT_CHARS = 50_000
 
 
 def _extract_text_from_pdf(data: bytes) -> str:
-    """Extract text from PDF bytes. Returns empty string on failure."""
     try:
         import PyPDF2
         from io import BytesIO
@@ -848,15 +949,12 @@ def _extract_text_from_pdf(data: bytes) -> str:
                 pass
         return text.strip()[:MAX_TEXT_CHARS]
     except ImportError:
-        log.warning("PyPDF2 not installed — PDF text extraction disabled")
         return "[PDF text extraction unavailable — install PyPDF2: pip install PyPDF2]"
     except Exception as exc:
-        log.warning("PDF parse failed: %s", exc)
         return f"[Could not extract PDF text: {exc}]"
 
 
 def _safe_decode_text(data: bytes) -> Optional[str]:
-    """Try to decode bytes as text using common encodings."""
     for encoding in ("utf-8", "utf-16", "latin-1"):
         try:
             return data.decode(encoding)
@@ -870,10 +968,6 @@ def _safe_decode_text(data: bytes) -> Optional[str]:
 @login_required
 @limiter.limit("20 per minute; 100 per hour")
 def api_upload():
-    """
-    Accept file uploads. Returns extracted text for documents,
-    or base64 data URL for images.
-    """
     err = _check_csrf()
     if err:
         return err
@@ -971,13 +1065,6 @@ def _build_multimodal_message(
     message: str,
     attachments: List[Dict],
 ) -> Tuple[Any, str]:
-    """
-    Build the user message content for AI consumption and the display text
-    saved to the database.
-
-    Returns:
-        (ai_content, display_text)
-    """
     if not attachments:
         return message, message
 
@@ -990,7 +1077,6 @@ def _build_multimodal_message(
         suffix = f"\n\n📎 Attached: {names}"
         display = (display + suffix).strip() if display else suffix.strip()
 
-    # If no images, inline document text as a single string
     if not image_atts:
         ai_text = message or ""
         for att in doc_atts:
@@ -1001,7 +1087,6 @@ def _build_multimodal_message(
             )
         return ai_text.strip(), display
 
-    # Otherwise, build multimodal parts list
     parts: List[Dict[str, Any]] = []
 
     combined_text = message or ""
@@ -1014,7 +1099,6 @@ def _build_multimodal_message(
     if combined_text.strip():
         parts.append({"type": "text", "text": combined_text.strip()})
 
-    # Add each image as image_url part — validate format
     for img in image_atts:
         url = img.get("data_url", "")
         if not url.startswith("data:image/"):
@@ -1026,18 +1110,12 @@ def _build_multimodal_message(
         })
 
     if not parts:
-        # All images were invalid — fall back to text-only
         return (message or "").strip() or "[Attachments failed to load]", display
 
     return parts, display
 
 
-def _persist_user_message(
-    sess_id: str,
-    display_text: str,
-    has_attachments: bool,
-):
-    """Insert the user message row into the DB."""
+def _persist_user_message(sess_id: str, display_text: str, has_attachments: bool):
     _q(
         "INSERT INTO messages "
         "(id,session_id,role,content,tokens_used,has_attachments,created_at) "
@@ -1053,7 +1131,6 @@ def _persist_user_message(
 
 
 def _safe_stream_persist(sess_id: str, reply: str):
-    """Persist an assistant reply from a streaming generator with safe cleanup."""
     if not reply or not reply.strip():
         return
     conn = None
@@ -1187,7 +1264,7 @@ def api_reset_password():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  General chat  (nvidia reasoning) — WITH ATTACHMENT SUPPORT
+#  General chat — WITH ATTACHMENT SUPPORT
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.route("/api/chat", methods=["POST"])
@@ -1217,9 +1294,7 @@ def api_chat():
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
 
-    sess_id = _ensure_chat_session(
-        sess_id, user_id, display_text or "Attachment"
-    )
+    sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Attachment")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
     history = _get_history(sess_id)
@@ -1237,11 +1312,8 @@ def api_chat():
         _save_assistant_reply(sess_id, reply)
 
         ms = int((time.monotonic() - t0) * 1000)
-        _db_log(
-            "INFO",
-            f"Chat {ms}ms attach={len(attachments)}",
-            "/api/chat", user_id, ms, ip=_client_ip(),
-        )
+        _db_log("INFO", f"Chat {ms}ms attach={len(attachments)}",
+                "/api/chat", user_id, ms, ip=_client_ip())
         return jsonify(reply=reply, session_id=sess_id, model=CHAT_MODEL)
 
     except requests.Timeout:
@@ -1282,9 +1354,7 @@ def api_chat_stream():
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
 
-    sess_id = _ensure_chat_session(
-        sess_id, user_id, display_text or "Attachment"
-    )
+    sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Attachment")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
     history = _get_history(sess_id)
@@ -1405,7 +1475,7 @@ def api_chat_public():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Coding  (kimi-k2.6 primary  /  minimax-m2.5 fallback) — WITH ATTACHMENTS
+#  Coding endpoints  (kimi-k2.6 primary  /  minimax-m2.5 fallback)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _coding_payload(model: str, history: List[Dict]) -> Dict:
@@ -1475,11 +1545,8 @@ def api_code():
 
     _save_assistant_reply(sess_id, reply)
     ms = int((time.monotonic() - t0) * 1000)
-    _db_log(
-        "INFO",
-        f"Code {ms}ms model={used_model} attach={len(attachments)}",
-        "/api/code", user_id, ms, ip=_client_ip(),
-    )
+    _db_log("INFO", f"Code {ms}ms model={used_model} attach={len(attachments)}",
+            "/api/code", user_id, ms, ip=_client_ip())
     return jsonify(reply=reply, session_id=sess_id, model=used_model)
 
 
@@ -1632,11 +1699,8 @@ def api_research():
         _save_assistant_reply(sess_id, reply)
 
         ms = int((time.monotonic() - t0) * 1000)
-        _db_log(
-            "INFO",
-            f"Research {ms}ms attach={len(attachments)}",
-            "/api/research", user_id, ms, ip=_client_ip(),
-        )
+        _db_log("INFO", f"Research {ms}ms attach={len(attachments)}",
+                "/api/research", user_id, ms, ip=_client_ip())
         return jsonify(reply=reply, session_id=sess_id, model=RESEARCH_MODEL)
 
     except requests.Timeout:
@@ -1789,7 +1853,6 @@ def api_rerank():
         for r in results:
             idx = r.get("index")
             if idx is None or not isinstance(idx, int) or not (0 <= idx < n_docs):
-                log.warning("Rerank out-of-range index %s — skipping", idx)
                 continue
             formatted.append({
                 "index":           idx,
@@ -1897,7 +1960,7 @@ def api_image_generate():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Owl Alpha — WITH ATTACHMENT SUPPORT
+#  Owl Alpha
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.route("/api/owl", methods=["POST"])
@@ -1948,11 +2011,8 @@ def api_owl():
         _save_assistant_reply(sess_id, reply)
 
         ms = int((time.monotonic() - t0) * 1000)
-        _db_log(
-            "INFO",
-            f"Owl {ms}ms attach={len(attachments)}",
-            "/api/owl", user_id, ms, ip=_client_ip(),
-        )
+        _db_log("INFO", f"Owl {ms}ms attach={len(attachments)}",
+                "/api/owl", user_id, ms, ip=_client_ip())
         return jsonify(reply=reply, session_id=sess_id, model=OWL_MODEL)
 
     except requests.Timeout:
@@ -2346,7 +2406,6 @@ def api_set_password():
 @csrf.exempt
 @login_required
 def api_me_update():
-    """Allow a user to update their own username."""
     err = _check_csrf()
     if err:
         return err
@@ -2802,7 +2861,6 @@ def admin_user(uid_):
         if field not in data:
             continue
         if col not in _SAFE_UPDATE_COLUMNS:
-            log.error("Blocked unsafe column: %s", col)
             return jsonify(error="Internal configuration error"), 500
         value = str(data[field]).strip()
         if not validate(value):
@@ -2925,7 +2983,6 @@ def admin_donations():
 @csrf.exempt
 @admin_required
 def admin_uploads():
-    """List recent file uploads across all users."""
     rows = _rows(_q(
         """SELECT u.id, u.filename, u.mime_type, u.size, u.created_at,
                   users.username, users.email
@@ -2999,13 +3056,19 @@ def admin_settings():
         except ImportError:
             pass
 
+        email_provider = "none"
+        if os.environ.get("RESEND_API_KEY"):
+            email_provider = "resend"
+        elif os.environ.get("SMTP_HOST"):
+            email_provider = "smtp"
+
         return jsonify(settings=dict(
             site_name               = os.environ.get("SITE_NAME", "Jarvis AI"),
             admin_username          = _ADMIN_USERNAME,
             admin_email             = _ADMIN_EMAIL,
             models                  = ALL_MODELS,
             razorpay_configured     = bool(_rzp_client),
-            smtp_configured         = bool(os.environ.get("SMTP_HOST")),
+            email_provider          = email_provider,
             openrouter_configured   = bool(os.environ.get("OPENROUTER_API_KEY")),
             google_oauth_configured = bool(app.config["GOOGLE_CLIENT_ID"]),
             pdf_extraction          = pdf_ok,
@@ -3144,21 +3207,28 @@ def api_health():
     except ImportError:
         pass
 
+    email_provider = "none"
+    if os.environ.get("RESEND_API_KEY"):
+        email_provider = "resend"
+    elif os.environ.get("SMTP_HOST"):
+        email_provider = "smtp"
+
     return jsonify(
-        status        = "ok" if db_ok else "degraded",
-        db            = db_ok,
-        db_type       = "sqlite",
-        models        = ALL_MODELS,
-        razorpay      = bool(_rzp_client),
-        openrouter    = bool(os.environ.get("OPENROUTER_API_KEY")),
-        google_oauth  = bool(app.config["GOOGLE_CLIENT_ID"]),
-        pdf_extract   = pdf_ok,
-        uploads       = dict(
+        status         = "ok" if db_ok else "degraded",
+        db             = db_ok,
+        db_type        = "sqlite",
+        models         = ALL_MODELS,
+        razorpay       = bool(_rzp_client),
+        openrouter     = bool(os.environ.get("OPENROUTER_API_KEY")),
+        google_oauth   = bool(app.config["GOOGLE_CLIENT_ID"]),
+        email_provider = email_provider,
+        pdf_extract    = pdf_ok,
+        uploads        = dict(
             max_file_mb = MAX_FILE_SIZE // 1024 // 1024,
             max_files   = MAX_FILES,
         ),
-        production    = _IS_PROD,
-        ts            = _now(),
+        production     = _IS_PROD,
+        ts             = _now(),
     ), 200 if db_ok else 503
 
 
@@ -3186,7 +3256,7 @@ def server_error(_):       return jsonify(error="Internal server error"), 500
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Entry point  (python app.py only — Gunicorn imports the module directly)
+#  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
