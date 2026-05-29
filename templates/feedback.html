@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feedback — Jarvis AI</title>
+    <meta name="description" content="Share your feedback to help us improve Jarvis.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Karla:wght@300;400;500;600&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        :root {
+            --black:      #0a0907;
+            --deep:       #111009;
+            --surface:    #181510;
+            --card:       #1e1a14;
+            --border:     rgba(255, 220, 140, 0.12);
+            --amber:      #e8a838;
+            --amber-dim:  rgba(232, 168, 56, 0.18);
+            --amber-glow: rgba(232, 168, 56, 0.06);
+            --cream:      #f0e8d8;
+            --muted:      #8c7e6a;
+            --faint:      #3a3228;
+            --serif:      'Cormorant Garamond', Georgia, serif;
+            --sans:       'Karla', system-ui, sans-serif;
+            --code:       'Fira Code', monospace;
+            --success:    #5cb87a;
+            --danger:     #dc5050;
+        }
+        html { scroll-behavior: smooth; }
+        body {
+            background: var(--black);
+            color: var(--cream);
+            font-family: var(--sans);
+            font-weight: 400;
+            line-height: 1.7;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+            opacity: 0.028;
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        /* Nav */
+        nav {
+            padding: 1.25rem 4rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+            z-index: 10;
+        }
+        .logo {
+            font-family: var(--serif);
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: .02em;
+            color: var(--cream);
+            text-decoration: none;
+        }
+        .logo span { color: var(--amber); }
+        .nav-back {
+            color: var(--muted);
+            font-size: .875rem;
+            text-decoration: none;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            transition: color .2s;
+        }
+        .nav-back:hover { color: var(--cream); }
+
+        /* Main content */
+        .feedback-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem 1.5rem;
+        }
+        .feedback-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 3rem 2.5rem;
+            width: 100%;
+            max-width: 560px;
+            box-shadow: 0 30px 80px rgba(0,0,0,.5);
+        }
+        .feedback-title {
+            font-family: var(--serif);
+            font-size: 2.2rem;
+            font-weight: 600;
+            color: var(--cream);
+            margin-bottom: .5rem;
+        }
+        .feedback-sub {
+            font-size: .9rem;
+            color: var(--muted);
+            margin-bottom: 2rem;
+            font-weight: 300;
+        }
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        .form-label {
+            display: block;
+            font-size: .75rem;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: .4rem;
+        }
+        .form-input,
+        .form-textarea {
+            width: 100%;
+            padding: .75rem 1rem;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--cream);
+            font-family: var(--sans);
+            font-size: .95rem;
+            transition: border-color .25s, background .25s;
+            outline: none;
+        }
+        .form-input:focus,
+        .form-textarea:focus {
+            border-color: rgba(232,168,56,.5);
+            background: var(--surface);
+        }
+        .form-textarea {
+            resize: vertical;
+            min-height: 120px;
+        }
+        .form-submit {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            padding: .85rem 2.5rem;
+            background: var(--amber);
+            color: var(--black);
+            border: none;
+            border-radius: 4px;
+            font-family: var(--sans);
+            font-size: .9rem;
+            font-weight: 500;
+            letter-spacing: .05em;
+            cursor: pointer;
+            transition: opacity .2s, transform .2s;
+        }
+        .form-submit:hover { opacity: .9; transform: translateY(-1px); }
+        .form-submit:disabled { opacity: .5; cursor: not-allowed; }
+
+        .feedback-success {
+            display: none;
+            text-align: center;
+        }
+        .feedback-success.visible {
+            display: block;
+        }
+        .feedback-success .icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            margin: 0 auto 1rem;
+            background: rgba(92,184,122,.15);
+            border: 2px solid rgba(92,184,122,.4);
+            color: var(--success);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+        .feedback-success h2 {
+            font-family: var(--serif);
+            font-size: 2rem;
+            color: var(--cream);
+            margin-bottom: .5rem;
+        }
+        .feedback-success p {
+            color: var(--muted);
+            margin-bottom: 1.5rem;
+        }
+        .back-btn {
+            display: inline-block;
+            padding: .75rem 2rem;
+            border: 1px solid var(--amber);
+            color: var(--amber);
+            border-radius: 4px;
+            font-size: .9rem;
+            text-decoration: none;
+            transition: background .25s, color .25s;
+        }
+        .back-btn:hover { background: var(--amber); color: var(--black); }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--muted);
+            font-size: .75rem;
+            border-top: 1px solid var(--border);
+        }
+        @media (max-width: 600px) {
+            nav { padding: 1rem 1.5rem; }
+            .feedback-card { padding: 2rem 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Nav -->
+    <nav>
+        <a href="/" class="logo">JARV<span>IS</span></a>
+        <a href="/" class="nav-back">← Back to home</a>
+    </nav>
+
+    <!-- Feedback Form -->
+    <div class="feedback-container">
+        <div class="feedback-card" id="feedbackCard">
+            <div class="feedback-form" id="feedbackForm">
+                <h1 class="feedback-title">Share your <em style="color:var(--amber); font-style:italic;">thoughts</em></h1>
+                <p class="feedback-sub">Let us know how Jarvis works for you, or what we could do better.</p>
+                <div class="form-group">
+                    <label for="name" class="form-label">Your name</label>
+                    <input type="text" id="name" class="form-input" placeholder="Sourav B." required>
+                </div>
+                <div class="form-group">
+                    <label for="email" class="form-label">Email (optional)</label>
+                    <input type="email" id="email" class="form-input" placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="message" class="form-label">Your feedback</label>
+                    <textarea id="message" class="form-textarea" placeholder="Tell us anything…" required></textarea>
+                </div>
+                <button type="button" class="form-submit" id="submitBtn">Send feedback <span class="arrow">→</span></button>
+                <p class="support-note" style="margin-top:.75rem; font-size:.75rem; color:var(--muted);">We read every message.</p>
+            </div>
+            <div class="feedback-success" id="successMessage">
+                <div class="icon">✓</div>
+                <h2>Thank you!</h2>
+                <p>Your feedback helps us make Jarvis better for everyone.</p>
+                <a href="/" class="back-btn">Back to Jarvis</a>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>© 2025 Jarvis AI · Feedback matters</p>
+    </footer>
+
+    <script>
+        const form = document.getElementById('feedbackForm');
+        const success = document.getElementById('successMessage');
+        const submitBtn = document.getElementById('submitBtn');
+
+        submitBtn.addEventListener('click', async () => {
+            const name = document.getElementById('name').value.trim();
+            const email = document.getElementById('email').value.trim();
+            const message = document.getElementById('message').value.trim();
+            if (!name || !message) {
+                alert('Please fill in at least your name and feedback.');
+                return;
+            }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Sending…';
+            try {
+                const res = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, email, message })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    form.style.display = 'none';
+                    success.classList.add('visible');
+                } else {
+                    alert(data.error || 'Failed to send. Please try again.');
+                }
+            } catch (err) {
+                alert('Network error. Please try again.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Send feedback →';
+            }
+        });
+    </script>
+</body>
+</html>

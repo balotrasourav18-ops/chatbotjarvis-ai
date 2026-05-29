@@ -1,0 +1,1 @@
+web: gunicorn filename:flask_variable

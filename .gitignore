@@ -1,0 +1,12 @@
+.env
+venv/
+__pycache__/
+*.db
+test_smtp.py
+venv/
+.antigravity/
+__pycache__/
+*.pyc
+*.pdb
+*.exe
+jarvis.db
