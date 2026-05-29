@@ -16,3 +16,7 @@ PyPDF2>=3.0,<4.0
 
 razorpay>=1.4,<2.0
 PyPDF2>=3.0,<4.0
+razorpay
+PyPDF2
+razorpay
+PyPDF2
