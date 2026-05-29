@@ -10,3 +10,4 @@ __pycache__/
 *.pdb
 *.exe
 jarvis.db
+.env
