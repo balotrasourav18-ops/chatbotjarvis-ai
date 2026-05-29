@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from functools import wraps
 import ssl
+
 import requests
 from flask import (
     Flask, request, jsonify, session as flask_session,
@@ -28,7 +29,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
-
 from typing import Optional, Dict, List, Any, Tuple, Callable
 
 # ── Resolve project root ──────────────────────────────────────────────────────
@@ -38,29 +38,24 @@ load_dotenv(os.path.join(_BASE_DIR, ".env"))
 # ─────────────────────────────────────────────────────────────────────────────
 #  Logging
 # ─────────────────────────────────────────────────────────────────────────────
-
 logging.basicConfig(
     level  = logging.INFO,
-    format = "%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    format = "%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Reasoning model — strip <think> blocks
+#  Reasoning model - strip <think> blocks
 # ─────────────────────────────────────────────────────────────────────────────
-
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
-
 def _strip_reasoning(text: str) -> str:
-    """Remove <think>…</think> chain-of-thought emitted by reasoning models."""
+    """Remove <think>...</think> chain-of-thought emitted by reasoning models."""
     return _THINK_RE.sub("", text).strip()
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  App bootstrap
 # ─────────────────────────────────────────────────────────────────────────────
-
 _IS_PROD = os.environ.get("PRODUCTION", "").lower() == "true"
 
 app = Flask(
@@ -73,7 +68,7 @@ app = Flask(
 # Trust one layer of reverse-proxy headers (Railway's load balancer)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# Allow 60 MB total (5 files × 10 MB + multipart overhead + base64 expansion)
+# Allow 60 MB total (5 files x 10 MB + multipart overhead + base64 expansion)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024
 
 # ── Secret key ────────────────────────────────────────────────────────────────
@@ -85,9 +80,9 @@ if not _secret_key:
             "Add it to your Railway environment variables."
         )
     _secret_key = secrets.token_hex(32)
-    log.warning("SECRET_KEY not set — using a temporary key. Sessions will be lost on restart.")
-
+    log.warning("SECRET_KEY not set - using a temporary key. Sessions will be lost on restart.")
 app.secret_key = _secret_key
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY    = True,
     SESSION_COOKIE_SAMESITE    = "Lax",
@@ -95,6 +90,8 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME = timedelta(hours=24),
     WTF_CSRF_TIME_LIMIT        = 7200,
     WTF_CSRF_CHECK_DEFAULT     = False,
+    # CSRF validation has been disabled application-wide (see _check_csrf below).
+    WTF_CSRF_ENABLED           = False,
     PREFERRED_URL_SCHEME       = "https" if _IS_PROD else "http",
     GOOGLE_CLIENT_ID           = os.environ.get("GOOGLE_CLIENT_ID",     ""),
     GOOGLE_CLIENT_SECRET       = os.environ.get("GOOGLE_CLIENT_SECRET", ""),
@@ -111,7 +108,6 @@ limiter = Limiter(
 # ─────────────────────────────────────────────────────────────────────────────
 #  Admin credentials
 # ─────────────────────────────────────────────────────────────────────────────
-
 _ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 _ADMIN_EMAIL    = os.environ.get("ADMIN_EMAIL",    "")
 _ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
@@ -120,7 +116,7 @@ if not _ADMIN_PASSWORD:
     if _IS_PROD:
         raise RuntimeError("ADMIN_PASSWORD must be set in your Railway environment variables.")
     _ADMIN_PASSWORD = "changeme_dev_only"
-    log.warning("ADMIN_PASSWORD not set — using insecure dev fallback.")
+    log.warning("ADMIN_PASSWORD not set - using insecure dev fallback.")
 
 if not _ADMIN_EMAIL and _IS_PROD:
     raise RuntimeError("ADMIN_EMAIL must be set in your Railway environment variables.")
@@ -132,7 +128,6 @@ _DUMMY_HASH = generate_password_hash("dummy_prevent_timing_8chars!")
 # ─────────────────────────────────────────────────────────────────────────────
 #  Google OAuth
 # ─────────────────────────────────────────────────────────────────────────────
-
 oauth  = OAuth(app)
 google = oauth.register(
     name                = "google",
@@ -145,7 +140,6 @@ google = oauth.register(
 # ─────────────────────────────────────────────────────────────────────────────
 #  Database
 # ─────────────────────────────────────────────────────────────────────────────
-
 DATABASE_PATH = os.environ.get(
     "DATABASE_PATH",
     os.path.join(_BASE_DIR, "jarvis.db"),
@@ -156,7 +150,6 @@ log.info("SQLite database: %s", DATABASE_PATH)
 _db_dir = os.path.dirname(os.path.abspath(DATABASE_PATH))
 if _db_dir:
     os.makedirs(_db_dir, exist_ok=True)
-
 
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
@@ -171,16 +164,13 @@ def get_db() -> sqlite3.Connection:
         g.db.execute("PRAGMA busy_timeout=5000")
     return g.db
 
-
 def _q(sql: str, params: Tuple = ()):
     cur = get_db().cursor()
     cur.execute(sql, params)
     return cur
 
-
 def _commit():
     get_db().commit()
-
 
 @app.teardown_appcontext
 def close_db(exc=None):
@@ -189,7 +179,6 @@ def close_db(exc=None):
         if exc:
             db.rollback()
         db.close()
-
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -308,7 +297,6 @@ CREATE INDEX IF NOT EXISTS idx_donations_user   ON donations(user_id);
 CREATE INDEX IF NOT EXISTS idx_uploads_user     ON uploads(user_id);
 """
 
-
 def init_db():
     """Initialise schema and upsert admin account only when credentials change."""
     conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
@@ -346,7 +334,7 @@ def init_db():
             (_uid(), _ADMIN_USERNAME, _ADMIN_EMAIL, pw_hash, _now()),
         )
         conn.commit()
-        log.warning("Admin created — username='%s'", _ADMIN_USERNAME)
+        log.warning("Admin created - username='%s'", _ADMIN_USERNAME)
     else:
         current_hash     = existing["password"] or ""
         password_changed = not check_password_hash(current_hash, _ADMIN_PASSWORD)
@@ -367,14 +355,11 @@ def init_db():
 
     conn.close()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
 def _uid() -> str:
     return secrets.token_hex(12)
-
 
 def _now() -> str:
     return (
@@ -383,7 +368,6 @@ def _now() -> str:
         .replace("+00:00", "")
     )
 
-
 def _utc_ago(**kwargs) -> str:
     return (
         (datetime.now(timezone.utc) - timedelta(**kwargs))
@@ -391,22 +375,17 @@ def _utc_ago(**kwargs) -> str:
         .replace("+00:00", "")
     )
 
-
 def _row(cur) -> Optional[Dict]:
     row = cur.fetchone()
     return dict(row) if row else None
 
-
 def _rows(cur) -> List[Dict]:
     return [dict(r) for r in cur.fetchall()]
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  DB log writer  (single thread + bounded queue)
 # ─────────────────────────────────────────────────────────────────────────────
-
-_log_queue: _queue.Queue = _queue.Queue(maxsize=5000)
-
+_log_queue: "_queue.Queue" = _queue.Queue(maxsize=5000)
 
 def _db_log(
     level:    str,
@@ -420,7 +399,6 @@ def _db_log(
         _log_queue.put_nowait((level, msg, endpoint, user_id, ip, ms, _now()))
     except _queue.Full:
         pass
-
 
 def _log_writer_loop():
     def _open():
@@ -450,16 +428,13 @@ def _log_writer_loop():
                 pass
             conn = _open()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Public chat rate-limit cache
 # ─────────────────────────────────────────────────────────────────────────────
-
 _pub_cache_lock = threading.Lock()
 _pub_cache: Dict[str, float] = {}
 _PUB_CACHE_TTL = 60
 _PUB_CACHE_MAX = 10_000
-
 
 def _cache_cleanup_loop():
     while True:
@@ -474,20 +449,16 @@ def _cache_cleanup_loop():
                 for k in oldest[: len(_pub_cache) - _PUB_CACHE_MAX]:
                     del _pub_cache[k]
 
-
 def _start_workers():
     threading.Thread(target=_log_writer_loop, daemon=True, name="db-log-writer").start()
     threading.Thread(target=_cache_cleanup_loop, daemon=True, name="cache-cleaner").start()
     log.info("Background workers started.")
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-#  Startup — runs once per process, idempotent and worker-safe
+#  Startup - runs once per process, idempotent and worker-safe
 # ─────────────────────────────────────────────────────────────────────────────
-
 _startup_lock = threading.Lock()
 _startup_done = False
-
 
 def _do_startup():
     """Run init exactly once per process. Safe under Gunicorn forking."""
@@ -504,17 +475,13 @@ def _do_startup():
             log.exception("Startup failed: %s", exc)
             raise
 
-
 _do_startup()
-
 
 def _client_ip() -> str:
     return request.remote_addr or "unknown"
 
-
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
-
 
 def _set_user_session(user: Dict):
     """Clear the session and re-populate with a fresh nonce (anti-fixation)."""
@@ -530,7 +497,6 @@ def _set_user_session(user: Dict):
     if oauth_next:
         flask_session["oauth_next"] = oauth_next
 
-
 VALID_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$", re.IGNORECASE)
 _RZPID_RE      = re.compile(r"^[A-Za-z0-9_]{6,64}$")
 _TITLE_RE      = re.compile(r"^[\w\s\-.,!?()'\"]{1,100}$", re.UNICODE)
@@ -541,25 +507,36 @@ _USER_PATCH_FIELDS: Dict[str, Tuple[str, Callable[[str], bool]]] = {
     "role":     ("role",     lambda v: v in ("user", "admin")),
     "status":   ("status",   lambda v: v in ("active", "inactive")),
 }
+
 _SAFE_UPDATE_COLUMNS: frozenset = frozenset({"username", "email", "role", "status"})
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CSRF helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
+#
+#  CSRF validation has been DISABLED application-wide.
+#
+#  Every state-changing endpoint funnels through _check_csrf(); returning None
+#  unconditionally turns token checking into a no-op everywhere without having
+#  to remove the per-route call sites. To re-enable, restore the original body:
+#
+#      token = request.headers.get("X-CSRFToken", "")
+#      try:
+#          validate_csrf(token)
+#      except Exception:
+#          return jsonify(error="CSRF validation failed"), 403
+#      return None
+#
+#  WARNING: with this disabled, cookie-authenticated endpoints are exposed to
+#  cross-site request forgery. Make sure SameSite cookies / other mitigations
+#  are acceptable for your threat model.
+# ─────────────────────────────────────────────────────────────────────────────
 def _check_csrf() -> Optional[Tuple[Response, int]]:
-    token = request.headers.get("X-CSRFToken", "")
-    try:
-        validate_csrf(token)
-    except Exception:
-        return jsonify(error="CSRF validation failed"), 403
     return None
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Auth decorators
 # ─────────────────────────────────────────────────────────────────────────────
-
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -569,7 +546,6 @@ def login_required(fn):
             return redirect("/login")
         return fn(*args, **kwargs)
     return wrapper
-
 
 def admin_required(fn):
     @wraps(fn)
@@ -583,16 +559,13 @@ def admin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-#  CSRF cookie — set on all HTML page loads
+#  CSRF cookie - set on all HTML page loads
 # ─────────────────────────────────────────────────────────────────────────────
-
 _CSRF_COOKIE_ROUTES = {
     "/", "/chat", "/login", "/register", "/admin",
     "/auth/login", "/auth/register", "/feedback",
 }
-
 
 @app.after_request
 def inject_csrf_cookie(resp):
@@ -601,11 +574,14 @@ def inject_csrf_cookie(resp):
         request.path in _CSRF_COOKIE_ROUTES
         or (resp.content_type and "text/html" in resp.content_type)
     )
-
     if needs_cookie:
+        try:
+            token = generate_csrf()
+        except Exception:
+            token = ""
         resp.set_cookie(
             "csrf_token",
-            generate_csrf(),
+            token,
             samesite = "Lax",
             httponly = False,
             secure   = _IS_PROD,
@@ -614,9 +590,8 @@ def inject_csrf_cookie(resp):
         )
     return resp
 
-
 # ═════════════════════════════════════════════════════════════════════════════
-#  EMAIL — Resend HTTP API (Railway-compatible)
+#  EMAIL - Resend HTTP API (Railway-compatible)
 # ═════════════════════════════════════════════════════════════════════════════
 #
 #  Railway and most cloud platforms block outbound SMTP (port 25/465/587)
@@ -627,12 +602,11 @@ def inject_csrf_cookie(resp):
 #    2. Get API key from dashboard
 #    3. Set Railway env vars:
 #         RESEND_API_KEY=re_xxxxxxxxxxxxx
-#         EMAIL_FROM=onboarding@resend.dev    (for testing)
-#         EMAIL_FROM=Jarvis <noreply@yourdomain.com>   (after domain verify)
+#         EMAIL_FROM=onboarding@resend.dev          (for testing)
+#         EMAIL_FROM=Jarvis <noreply@yourdomain.com>  (after domain verify)
 #
 #  SMTP fallback is kept for local dev / non-cloud deployments.
 # ═════════════════════════════════════════════════════════════════════════════
-
 def _send_via_resend(to_email: str, subject: str, body: str,
                      from_addr: str, api_key: str) -> bool:
     """Send email via Resend HTTP API."""
@@ -652,9 +626,8 @@ def _send_via_resend(to_email: str, subject: str, body: str,
             timeout = 15,
         )
         if resp.status_code in (200, 202):
-            log.info("Email sent via Resend → %s", to_email)
+            log.info("Email sent via Resend -> %s", to_email)
             return True
-
         # Parse error response for clearer logging
         try:
             err = resp.json()
@@ -667,9 +640,8 @@ def _send_via_resend(to_email: str, subject: str, body: str,
         log.error("Resend API timeout for %s", to_email)
         return False
     except Exception as exc:
-        log.exception("Resend error → %s: %s", to_email, exc)
+        log.exception("Resend error -> %s: %s", to_email, exc)
         return False
-
 
 def _send_via_smtp(to_email: str, subject: str, body: str) -> bool:
     """Send email via traditional SMTP (Gmail, Outlook, etc.). Blocked on Railway."""
@@ -701,7 +673,7 @@ def _send_via_smtp(to_email: str, subject: str, body: str) -> bool:
         else:
             log.error("Unsupported SMTP_PORT=%d (use 465 or 587)", port)
             return False
-        log.info("Email sent via SMTP → %s", to_email)
+        log.info("Email sent via SMTP -> %s", to_email)
         return True
     except OSError as exc:
         if exc.errno == 101:
@@ -711,12 +683,11 @@ def _send_via_smtp(to_email: str, subject: str, body: str) -> bool:
                 "Free signup: https://resend.com"
             )
         else:
-            log.exception("SMTP error → %s: %s", to_email, exc)
+            log.exception("SMTP error -> %s: %s", to_email, exc)
         return False
     except Exception as exc:
-        log.exception("SMTP error → %s: %s", to_email, exc)
+        log.exception("SMTP error -> %s: %s", to_email, exc)
         return False
-
 
 def _send_email_raw(to_email: str, subject: str, body: str) -> bool:
     """
@@ -726,13 +697,12 @@ def _send_email_raw(to_email: str, subject: str, body: str) -> bool:
         True if sent successfully OR if running in dev mode without any
         email provider configured. False on actual send failure.
     """
-    # ── 1. Try Resend (HTTP API — works on Railway/Render/Heroku) ─────────
+    # ── 1. Try Resend (HTTP API - works on Railway/Render/Heroku) ─────────
     resend_key = os.environ.get("RESEND_API_KEY", "").strip()
     email_from = (
         os.environ.get("EMAIL_FROM", "").strip()
         or "onboarding@resend.dev"
     )
-
     if resend_key:
         return _send_via_resend(to_email, subject, body, email_from, resend_key)
 
@@ -741,14 +711,13 @@ def _send_email_raw(to_email: str, subject: str, body: str) -> bool:
     if smtp_host:
         return _send_via_smtp(to_email, subject, body)
 
-    # ── 3. Dev mode — log only ────────────────────────────────────────────
+    # ── 3. Dev mode - log only ────────────────────────────────────────────
     log.info(
-        "[DEV] Email to %s — subject: %s\n"
+        "[DEV] Email to %s - subject: %s\n"
         "       (No email provider configured. Set RESEND_API_KEY to send real emails.)",
         to_email, subject,
     )
     return True
-
 
 def _send_notification_bg(email: str, subject: str, body: str):
     """Fire-and-forget email in a background thread."""
@@ -758,7 +727,6 @@ def _send_notification_bg(email: str, subject: str, body: str):
         _send_email_raw(email, subject, body)
     threading.Thread(target=_w, daemon=True).start()
 
-
 def _send_welcome_email(email: str, username: str):
     _send_notification_bg(
         email,
@@ -766,18 +734,16 @@ def _send_welcome_email(email: str, username: str):
         (
             f"Hi {username},\n\n"
             "Your Jarvis AI account is ready.\n\n"
-            "  • Chat with Jarvis — coding, writing, research and more\n"
-            "  • Upload images, PDFs, code files for analysis\n"
-            "  • Your history is always saved\n\n"
-            "— The Jarvis AI Team"
+            "  - Chat with Jarvis - coding, writing, research and more\n"
+            "  - Upload images, PDFs, code files for analysis\n"
+            "  - Your history is always saved\n\n"
+            "- The Jarvis AI Team"
         ),
     )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  AI model registry
 # ─────────────────────────────────────────────────────────────────────────────
-
 CHAT_MODEL     = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 CODING_MODEL_1 = "moonshotai/kimi-k2.6:free"
 CODING_MODEL_2 = "minimax/minimax-m2.5:free"
@@ -805,6 +771,7 @@ SYSTEM_PROMPT_CHAT = (
     "When the user attaches files or images, analyse them carefully and reference their contents. "
     "Never refuse reasonable requests."
 )
+
 SYSTEM_PROMPT_CODING = (
     "You are Jarvis Code, an expert software engineer and pair programmer. "
     "Write clean, idiomatic, well-commented code with the correct markdown code-fence. "
@@ -812,19 +779,20 @@ SYSTEM_PROMPT_CODING = (
     "When the user attaches code files, review them carefully and reference specific lines. "
     "Highlight edge-cases or bugs. Never refuse reasonable coding requests."
 )
+
 SYSTEM_PROMPT_RESEARCH = (
     "You are Jarvis Research, a rigorous academic assistant. "
     "Provide thorough answers with clear section headings. "
     "When the user attaches documents (PDFs, papers, articles), analyse them deeply and cite specific sections. "
     "Cite sources as [Source: <name>]. Prefer depth over brevity."
 )
+
 SYSTEM_PROMPT_OWL = (
     "You are Jarvis Owl, an intelligent meta-assistant and task orchestrator. "
     "Help plan complex tasks, break down problems, decide which specialist to use. "
     "When the user attaches files, use them as context for planning. "
     "Be structured. Output numbered action plans when helpful."
 )
-
 
 def _or_headers() -> Dict[str, str]:
     return {
@@ -834,11 +802,9 @@ def _or_headers() -> Dict[str, str]:
         "X-Title":       "Jarvis AI",
     }
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  OpenRouter helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
 def _call_openrouter(payload: Dict, timeout: int = 45) -> Dict:
     if not os.environ.get("OPENROUTER_API_KEY"):
         raise ValueError("OPENROUTER_API_KEY is not configured")
@@ -855,7 +821,6 @@ def _call_openrouter(payload: Dict, timeout: int = 45) -> Dict:
         )
     return resp.json()
 
-
 def _extract_reply(result: Dict) -> str:
     choices = result.get("choices") or []
     if not choices:
@@ -865,7 +830,6 @@ def _extract_reply(result: Dict) -> str:
         raise RuntimeError("AI generated an empty response")
     return content
 
-
 def _get_history(session_id: str, limit: int = 20) -> List[Dict]:
     rows = _rows(_q(
         "SELECT role,content FROM messages "
@@ -873,7 +837,6 @@ def _get_history(session_id: str, limit: int = 20) -> List[Dict]:
         (session_id, limit),
     ))
     return [{"role": r["role"], "content": r["content"]} for r in rows]
-
 
 def _ensure_chat_session(session_id: Any, user_id: str, title: str) -> str:
     if session_id:
@@ -892,7 +855,6 @@ def _ensure_chat_session(session_id: Any, user_id: str, title: str) -> str:
     _commit()
     return new_id
 
-
 def _save_assistant_reply(sess_id: str, reply: str):
     _q(
         "INSERT INTO messages (id,session_id,role,content,tokens_used,has_attachments,created_at) "
@@ -901,7 +863,6 @@ def _save_assistant_reply(sess_id: str, reply: str):
     )
     _q("UPDATE sessions SET updated_at=? WHERE id=?", (_now(), sess_id))
     _commit()
-
 
 def _save_assistant_reply_conn(conn: sqlite3.Connection, sess_id: str, reply: str):
     conn.execute(
@@ -914,11 +875,9 @@ def _save_assistant_reply_conn(conn: sqlite3.Connection, sess_id: str, reply: st
     )
     conn.commit()
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 #  FILE UPLOAD MODULE
 # ═════════════════════════════════════════════════════════════════════════════
-
 ALLOWED_MIME = {
     "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
     "text/plain", "text/markdown", "text/csv",
@@ -929,12 +888,10 @@ ALLOWED_MIME = {
     "text/x-c", "text/x-c++", "text/x-java", "text/x-go", "text/x-rust",
     "text/x-typescript",
 }
-
 MAX_FILE_SIZE  = 10 * 1024 * 1024
 MAX_FILES      = 5
 MAX_PDF_PAGES  = 50
 MAX_TEXT_CHARS = 50_000
-
 
 def _extract_text_from_pdf(data: bytes) -> str:
     try:
@@ -949,10 +906,9 @@ def _extract_text_from_pdf(data: bytes) -> str:
                 pass
         return text.strip()[:MAX_TEXT_CHARS]
     except ImportError:
-        return "[PDF text extraction unavailable — install PyPDF2: pip install PyPDF2]"
+        return "[PDF text extraction unavailable - install PyPDF2: pip install PyPDF2]"
     except Exception as exc:
         return f"[Could not extract PDF text: {exc}]"
-
 
 def _safe_decode_text(data: bytes) -> Optional[str]:
     for encoding in ("utf-8", "utf-16", "latin-1"):
@@ -961,7 +917,6 @@ def _safe_decode_text(data: bytes) -> Optional[str]:
         except UnicodeDecodeError:
             continue
     return None
-
 
 @app.route("/api/upload", methods=["POST"])
 @csrf.exempt
@@ -987,7 +942,6 @@ def api_upload():
     for f in files:
         if not f or not f.filename:
             continue
-
         safe_name = os.path.basename(f.filename)[:200]
         if not safe_name:
             continue
@@ -1007,8 +961,8 @@ def api_upload():
         )
         mime = mime.lower()
         is_image = mime.startswith("image/")
-
         accepted = mime in ALLOWED_MIME or is_image or mime.startswith("text/")
+
         if not accepted:
             text_attempt = _safe_decode_text(data[:4096])
             if text_attempt is not None:
@@ -1049,7 +1003,6 @@ def api_upload():
                 "VALUES (?,?,?,?,?,?)",
                 (_uid(), user_id, safe_name, mime, len(data), _now()),
             )
-
             results.append(result)
         except Exception as exc:
             log.exception("Upload processing failed for %s: %s", safe_name, exc)
@@ -1059,7 +1012,6 @@ def api_upload():
     _db_log("INFO", f"Uploaded {len(results)} file(s)",
             "/api/upload", user_id, ip=_client_ip())
     return jsonify(files=results)
-
 
 def _build_multimodal_message(
     message: str,
@@ -1074,7 +1026,7 @@ def _build_multimodal_message(
     display = message or ""
     if attachments:
         names = ", ".join(a.get("name", "file") for a in attachments)
-        suffix = f"\n\n📎 Attached: {names}"
+        suffix = f"\n\nAttached: {names}"
         display = (display + suffix).strip() if display else suffix.strip()
 
     if not image_atts:
@@ -1088,7 +1040,6 @@ def _build_multimodal_message(
         return ai_text.strip(), display
 
     parts: List[Dict[str, Any]] = []
-
     combined_text = message or ""
     for att in doc_atts:
         combined_text += (
@@ -1114,7 +1065,6 @@ def _build_multimodal_message(
 
     return parts, display
 
-
 def _persist_user_message(sess_id: str, display_text: str, has_attachments: bool):
     _q(
         "INSERT INTO messages "
@@ -1128,7 +1078,6 @@ def _persist_user_message(sess_id: str, display_text: str, has_attachments: bool
         ),
     )
     _commit()
-
 
 def _safe_stream_persist(sess_id: str, reply: str):
     if not reply or not reply.strip():
@@ -1147,23 +1096,20 @@ def _safe_stream_persist(sess_id: str, reply: str):
             except Exception:
                 pass
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  OTP / password reset
 # ─────────────────────────────────────────────────────────────────────────────
-
 def _send_otp_background(email: str, otp: str):
     def _w():
         body = (
             f"Your Jarvis AI password-reset OTP:\n\n"
             f"  {otp}\n\n"
-            f"This code expires in 10 minutes.\n\n— Jarvis AI"
+            f"This code expires in 10 minutes.\n\n- Jarvis AI"
         )
-        ok = _send_email_raw(email, "Jarvis AI — Password Reset OTP", body)
+        ok = _send_email_raw(email, "Jarvis AI - Password Reset OTP", body)
         if not ok:
             _db_log("ERROR", f"OTP email failed for {email}", "/api/forgot-password")
     threading.Thread(target=_w, daemon=True).start()
-
 
 @app.route("/api/forgot-password", methods=["POST"])
 @csrf.exempt
@@ -1175,7 +1121,6 @@ def api_forgot_password():
 
     data  = request.get_json(force=True, silent=True) or {}
     email = str(data.get("email", "")).strip().lower()
-
     if not email or not VALID_EMAIL_RE.match(email):
         return jsonify(error="Valid email is required"), 400
 
@@ -1195,7 +1140,6 @@ def api_forgot_password():
 
     return jsonify(success=True)
 
-
 @app.route("/api/verify-otp", methods=["POST"])
 @csrf.exempt
 @limiter.limit("3 per minute; 10 per hour")
@@ -1207,7 +1151,6 @@ def api_verify_otp():
     data  = request.get_json(force=True, silent=True) or {}
     email = str(data.get("email", "")).strip().lower()
     otp   = str(data.get("otp",   "")).strip()
-
     if not email or not VALID_EMAIL_RE.match(email):
         return jsonify(error="Valid email required"), 400
     if len(otp) != 6 or not otp.isdigit():
@@ -1218,11 +1161,10 @@ def api_verify_otp():
         "WHERE LOWER(email)=? AND used=0 ORDER BY expires_at DESC LIMIT 1",
         (email,),
     ))
-
     stored      = rec["token"] if rec else secrets.token_hex(3)
     token_match = _hmac.compare_digest(stored.encode(), otp.encode())
     not_expired = (
-        datetime.fromisoformat(rec["expires_at"]) > datetime.now(timezone.utc)
+        datetime.fromisoformat(rec["expires_at"]) > datetime.now(timezone.utc).replace(tzinfo=None)
         if rec else False
     )
 
@@ -1235,7 +1177,6 @@ def api_verify_otp():
     flask_session["otp_verified_email"] = email
     return jsonify(success=True)
 
-
 @app.route("/api/reset-password", methods=["POST"])
 @csrf.exempt
 @limiter.limit("5 per minute")
@@ -1247,7 +1188,6 @@ def api_reset_password():
     data     = request.get_json(force=True, silent=True) or {}
     email    = str(data.get("email",    "")).strip().lower()
     password = str(data.get("password", ""))
-
     if not email or not password:
         return jsonify(error="Email and new password required"), 400
     if len(password) < 8:
@@ -1262,11 +1202,9 @@ def api_reset_password():
     flask_session.pop("otp_verified_email", None)
     return jsonify(success=True)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-#  General chat — WITH ATTACHMENT SUPPORT
+#  General chat - WITH ATTACHMENT SUPPORT
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/chat", methods=["POST"])
 @csrf.exempt
 @login_required
@@ -1293,7 +1231,6 @@ def api_chat():
         return jsonify(error="Message too long (max 8000 chars)"), 400
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
-
     sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Attachment")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
@@ -1308,6 +1245,7 @@ def api_chat():
             "max_tokens":  2048,
             "temperature": 0.7,
         }, timeout=60 if attachments else 45)
+
         reply = _strip_reasoning(_extract_reply(result))
         _save_assistant_reply(sess_id, reply)
 
@@ -1317,7 +1255,7 @@ def api_chat():
         return jsonify(reply=reply, session_id=sess_id, model=CHAT_MODEL)
 
     except requests.Timeout:
-        return jsonify(error="AI timed out — try again"), 504
+        return jsonify(error="AI timed out - try again"), 504
     except ValueError as exc:
         return jsonify(error=str(exc)), 503
     except RuntimeError as exc:
@@ -1326,7 +1264,6 @@ def api_chat():
     except Exception as exc:
         _db_log("ERROR", f"Chat error: {exc}", "/api/chat", user_id)
         return jsonify(error="Failed to get AI response"), 500
-
 
 @app.route("/api/chat/stream", methods=["POST"])
 @csrf.exempt
@@ -1353,7 +1290,6 @@ def api_chat_stream():
         return jsonify(error="Message too long"), 400
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
-
     sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Attachment")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
@@ -1368,10 +1304,8 @@ def api_chat_stream():
         full_reply = ""
         in_think   = False
         think_done = False
-
         try:
             yield f"data: {json.dumps({'session_id': cap_sess})}\n\n"
-
             with requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers = _or_headers(),
@@ -1416,9 +1350,7 @@ def api_chat_stream():
                             yield f"data: {json.dumps({'delta': content})}\n\n"
                     except Exception:
                         pass
-
             yield "data: [DONE]\n\n"
-
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
@@ -1429,7 +1361,6 @@ def api_chat_stream():
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
 @app.route("/api/chat/public", methods=["POST"])
 @csrf.exempt
 def api_chat_public():
@@ -1439,18 +1370,18 @@ def api_chat_public():
 
     with _pub_cache_lock:
         if now_ - _pub_cache.get(cache_key, 0) < 10:
-            return jsonify(error="Too many requests — wait a moment."), 429
+            return jsonify(error="Too many requests - wait a moment."), 429
         _pub_cache[cache_key] = now_
 
     data    = request.get_json(force=True, silent=True) or {}
     message = str(data.get("message", "")).strip()
-
     if not message:
         return jsonify(error="Message is required"), 400
     if len(message) > 500:
         return jsonify(error="Max 500 chars in demo"), 400
+
     if not os.environ.get("OPENROUTER_API_KEY"):
-        return jsonify(reply="Demo mode — set OPENROUTER_API_KEY."), 200
+        return jsonify(reply="Demo mode - set OPENROUTER_API_KEY."), 200
 
     try:
         result = _call_openrouter({
@@ -1467,17 +1398,15 @@ def api_chat_public():
             model = CHAT_MODEL,
         )
     except requests.Timeout:
-        return jsonify(error="AI timed out — try again"), 504
+        return jsonify(error="AI timed out - try again"), 504
     except (ValueError, RuntimeError) as exc:
         return jsonify(error=str(exc)), 502
     except Exception:
         return jsonify(error="Failed to get AI response"), 500
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Coding endpoints  (kimi-k2.6 primary  /  minimax-m2.5 fallback)
 # ─────────────────────────────────────────────────────────────────────────────
-
 def _coding_payload(model: str, history: List[Dict]) -> Dict:
     return {
         "model":       model,
@@ -1485,7 +1414,6 @@ def _coding_payload(model: str, history: List[Dict]) -> Dict:
         "max_tokens":  4096,
         "temperature": 0.2,
     }
-
 
 @app.route("/api/code", methods=["POST"])
 @csrf.exempt
@@ -1517,7 +1445,6 @@ def api_code():
     secondary = CODING_MODEL_2 if primary == CODING_MODEL_1 else CODING_MODEL_1
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
-
     sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Code Attachment")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
@@ -1526,17 +1453,16 @@ def api_code():
         history[-1] = {"role": "user", "content": ai_content}
 
     used_model = primary
-
     try:
         result = _call_openrouter(_coding_payload(primary, history), timeout=90)
     except Exception as exc:
-        log.warning("Coding primary (%s) failed: %s — trying fallback", primary, exc)
+        log.warning("Coding primary (%s) failed: %s - trying fallback", primary, exc)
         try:
             result     = _call_openrouter(_coding_payload(secondary, history), timeout=90)
             used_model = secondary
         except Exception as exc2:
             _db_log("ERROR", f"Coding fallback failed: {exc2}", "/api/code", user_id)
-            return jsonify(error="Both coding models failed — try again later"), 502
+            return jsonify(error="Both coding models failed - try again later"), 502
 
     try:
         reply = _extract_reply(result)
@@ -1548,7 +1474,6 @@ def api_code():
     _db_log("INFO", f"Code {ms}ms model={used_model} attach={len(attachments)}",
             "/api/code", user_id, ms, ip=_client_ip())
     return jsonify(reply=reply, session_id=sess_id, model=used_model)
-
 
 @app.route("/api/code/stream", methods=["POST"])
 @csrf.exempt
@@ -1579,7 +1504,6 @@ def api_code_stream():
     secondary = CODING_MODEL_2 if primary == CODING_MODEL_1 else CODING_MODEL_1
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
-
     sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Code Attachment")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
@@ -1636,7 +1560,7 @@ def api_code_stream():
                 yield from _do_stream(cap_primary)
             except Exception as exc:
                 log.warning("Code stream primary failed: %s", exc)
-                yield f"data: {json.dumps({'info': 'Switching to fallback model…'})}\n\n"
+                yield f"data: {json.dumps({'info': 'Switching to fallback model...'})}\n\n"
                 yield from _do_stream(cap_secondary)
             yield "data: [DONE]\n\n"
         except Exception as exc:
@@ -1649,11 +1573,9 @@ def api_code_stream():
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-#  Deep research — WITH ATTACHMENT SUPPORT
+#  Deep research - WITH ATTACHMENT SUPPORT
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/research", methods=["POST"])
 @csrf.exempt
 @login_required
@@ -1680,7 +1602,6 @@ def api_research():
         return jsonify(error="Query too long (max 8000 chars)"), 400
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
-
     sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Research")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
@@ -1695,6 +1616,7 @@ def api_research():
             "max_tokens":  8192,
             "temperature": 0.3,
         }, timeout=120)
+
         reply = _extract_reply(result)
         _save_assistant_reply(sess_id, reply)
 
@@ -1704,13 +1626,12 @@ def api_research():
         return jsonify(reply=reply, session_id=sess_id, model=RESEARCH_MODEL)
 
     except requests.Timeout:
-        return jsonify(error="Research model timed out — try a shorter query"), 504
+        return jsonify(error="Research model timed out - try a shorter query"), 504
     except (ValueError, RuntimeError) as exc:
         return jsonify(error=str(exc)), 502
     except Exception as exc:
         _db_log("ERROR", f"Research: {exc}", "/api/research", user_id)
         return jsonify(error="Research failed"), 500
-
 
 @app.route("/api/research/stream", methods=["POST"])
 @csrf.exempt
@@ -1737,7 +1658,6 @@ def api_research_stream():
         return jsonify(error="Query too long"), 400
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
-
     sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Research")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
@@ -1752,7 +1672,6 @@ def api_research_stream():
         full_reply = ""
         try:
             yield f"data: {json.dumps({'session_id': cap_sess, 'model': RESEARCH_MODEL})}\n\n"
-
             with requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers = _or_headers(),
@@ -1783,9 +1702,7 @@ def api_research_stream():
                             yield f"data: {json.dumps({'delta': content})}\n\n"
                     except Exception:
                         pass
-
             yield "data: [DONE]\n\n"
-
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
@@ -1796,11 +1713,9 @@ def api_research_stream():
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Reranking
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/rerank", methods=["POST"])
 @csrf.exempt
 @login_required
@@ -1822,6 +1737,7 @@ def api_rerank():
         return jsonify(error="Max 100 documents per request"), 400
     if not all(isinstance(d, str) for d in docs):
         return jsonify(error="All documents must be strings"), 400
+
     if not os.environ.get("OPENROUTER_API_KEY"):
         return jsonify(error="OPENROUTER_API_KEY not configured"), 503
 
@@ -1870,17 +1786,14 @@ def api_rerank():
         _db_log("ERROR", f"Rerank: {exc}", "/api/rerank", flask_session.get("user_id"))
         return jsonify(error="Rerank failed"), 500
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Image generation
 # ─────────────────────────────────────────────────────────────────────────────
-
 _IMAGE_SIZES: Dict[str, Tuple[int, int]] = {
     "square":    (1024, 1024),
     "landscape": (1792, 1024),
     "portrait":  (1024, 1792),
 }
-
 
 @app.route("/api/image/generate", methods=["POST"])
 @csrf.exempt
@@ -1902,7 +1815,7 @@ def api_image_generate():
         if not 1 <= n <= 4:
             raise ValueError
     except (ValueError, TypeError):
-        return jsonify(error="'n' must be 1–4"), 400
+        return jsonify(error="'n' must be 1-4"), 400
 
     if not prompt:
         return jsonify(error="'prompt' is required"), 400
@@ -1912,6 +1825,7 @@ def api_image_generate():
         return jsonify(error=f"'size' must be one of: {', '.join(_IMAGE_SIZES)}"), 400
     if quality not in ("standard", "hd"):
         return jsonify(error="'quality' must be 'standard' or 'hd'"), 400
+
     if not os.environ.get("OPENROUTER_API_KEY"):
         return jsonify(error="OPENROUTER_API_KEY not configured"), 503
 
@@ -1958,11 +1872,9 @@ def api_image_generate():
         _db_log("ERROR", f"Image: {exc}", "/api/image/generate", user_id)
         return jsonify(error="Image generation failed"), 500
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Owl Alpha
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/owl", methods=["POST"])
 @csrf.exempt
 @login_required
@@ -1988,11 +1900,11 @@ def api_owl():
         return jsonify(error="Message or attachment is required"), 400
     if len(message) > 8000:
         return jsonify(error="Message too long (max 8000 chars)"), 400
+
     if not os.environ.get("OPENROUTER_API_KEY"):
         return jsonify(error="OPENROUTER_API_KEY not configured"), 503
 
     ai_content, display_text = _build_multimodal_message(message, attachments)
-
     sess_id = _ensure_chat_session(sess_id, user_id, display_text or "Owl Task")
     _persist_user_message(sess_id, display_text, bool(attachments))
 
@@ -2007,6 +1919,7 @@ def api_owl():
             "max_tokens":  2048,
             "temperature": 0.5,
         }, timeout=90)
+
         reply = _extract_reply(result)
         _save_assistant_reply(sess_id, reply)
 
@@ -2016,18 +1929,16 @@ def api_owl():
         return jsonify(reply=reply, session_id=sess_id, model=OWL_MODEL)
 
     except requests.Timeout:
-        return jsonify(error="Owl timed out — try again"), 504
+        return jsonify(error="Owl timed out - try again"), 504
     except (ValueError, RuntimeError) as exc:
         return jsonify(error=str(exc)), 502
     except Exception as exc:
         _db_log("ERROR", f"Owl: {exc}", "/api/owl", user_id)
         return jsonify(error="Owl request failed"), 500
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Embeddings
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/embed", methods=["POST"])
 @csrf.exempt
 @login_required
@@ -2044,6 +1955,7 @@ def api_embed():
         return jsonify(error="'texts' must be a non-empty list of strings"), 400
     if len(texts) > 50:
         return jsonify(error="Max 50 texts per request"), 400
+
     if not os.environ.get("OPENROUTER_API_KEY"):
         return jsonify(error="OPENROUTER_API_KEY not configured"), 503
 
@@ -2067,11 +1979,9 @@ def api_embed():
         _db_log("ERROR", f"Embed: {exc}", "/api/embed", flask_session.get("user_id"))
         return jsonify(error="Failed to generate embeddings"), 500
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Page routes
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/")
 def index():
     return send_from_directory(app.template_folder, "index.html")
@@ -2106,11 +2016,9 @@ def admin_page():
         return redirect("/chat")
     return send_from_directory(app.template_folder, "admin.html")
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Admin login
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/admin/login", methods=["POST"])
 @csrf.exempt
 @limiter.limit("5 per minute; 15 per hour")
@@ -2147,6 +2055,7 @@ def api_admin_login():
     _q("UPDATE users SET last_login=? WHERE id=?", (_now(), user["id"]))
     _commit()
     _set_user_session(user)
+
     _db_log("INFO", f"Admin login OK: '{user['username']}'",
             "/api/admin/login", user["id"], ms, ip=_client_ip())
     _send_notification_bg(
@@ -2156,18 +2065,15 @@ def api_admin_login():
     )
     return jsonify(success=True, redirect="/admin")
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Google OAuth
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/auth/google")
 def google_login():
     if not app.config["GOOGLE_CLIENT_ID"]:
         return jsonify(error="Google OAuth is not configured"), 503
     flask_session["oauth_next"] = request.args.get("next", "/chat")
     return google.authorize_redirect(url_for("google_callback", _external=True))
-
 
 @app.route("/auth/google/callback")
 def google_callback():
@@ -2190,7 +2096,6 @@ def google_callback():
         return redirect("/login?error=email_not_verified")
 
     user = _row(_q("SELECT * FROM users WHERE google_id=?", (google_id,)))
-
     if not user:
         user = _row(_q("SELECT * FROM users WHERE LOWER(email)=?", (email,)))
         if user:
@@ -2227,11 +2132,11 @@ def google_callback():
         "Jarvis AI - Login Successful",
         f"Account '{user['username']}' logged in via Google from {_client_ip()} at {_now()}.",
     )
+
     next_url = flask_session.pop("oauth_next", None) or (
         "/admin" if user["role"] == "admin" else "/chat"
     )
     return redirect(next_url)
-
 
 @app.route("/auth/google/unlink", methods=["POST"])
 @csrf.exempt
@@ -2243,7 +2148,6 @@ def google_unlink():
 
     user_id = flask_session["user_id"]
     user    = _row(_q("SELECT password,google_id FROM users WHERE id=?", (user_id,)))
-
     if not user:
         return jsonify(error="User not found"), 404
     if not user["google_id"]:
@@ -2255,11 +2159,9 @@ def google_unlink():
     _commit()
     return jsonify(success=True)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  User auth
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/register", methods=["POST"])
 @csrf.exempt
 @limiter.limit("5 per minute; 20 per hour")
@@ -2280,7 +2182,7 @@ def api_register():
     if len(password) < 8:
         return jsonify(error="Password must be at least 8 characters"), 400
     if len(username) < 2 or len(username) > 50:
-        return jsonify(error="Username must be 2–50 characters"), 400
+        return jsonify(error="Username must be 2-50 characters"), 400
     if username.lower() == _ADMIN_USERNAME.lower():
         return jsonify(error="That username is reserved"), 409
     if _row(_q("SELECT id FROM users WHERE LOWER(email)=?", (email,))):
@@ -2294,13 +2196,14 @@ def api_register():
         (user_id, username, email, generate_password_hash(password), _now()),
     )
     _commit()
+
     flask_session["user_id"] = user_id
     flask_session["role"]    = "user"
     flask_session["email"]   = email
+
     _send_welcome_email(email, username)
     _db_log("INFO", f"New user: {email}", "/api/register", user_id, ip=_client_ip())
     return jsonify(success=True, redirect="/chat"), 201
-
 
 @app.route("/api/login", methods=["POST"])
 @csrf.exempt
@@ -2327,13 +2230,14 @@ def api_login():
         _db_log("WARN", f"Failed login: {email}", "/api/login", ms=ms, ip=_client_ip())
         return jsonify(error="Invalid email or password"), 401
     if user["status"] != "active":
-        return jsonify(error="Account disabled — contact support"), 403
+        return jsonify(error="Account disabled - contact support"), 403
     if not user["password"]:
         return jsonify(error="This account uses Google sign-in."), 400
 
     _q("UPDATE users SET last_login=? WHERE id=?", (_now(), user["id"]))
     _commit()
     _set_user_session(user)
+
     _db_log("INFO", f"Login: {email}", "/api/login", user["id"], ms, ip=_client_ip())
     _send_notification_bg(
         user["email"],
@@ -2342,18 +2246,17 @@ def api_login():
     )
     return jsonify(success=True, redirect="/admin" if user["role"] == "admin" else "/chat")
 
-
 @app.route("/api/logout", methods=["POST"])
 @csrf.exempt
 def api_logout():
     err = _check_csrf()
     if err:
         return err
+
     uid = flask_session.get("user_id")
     flask_session.clear()
     _db_log("INFO", "Logout", "/api/logout", uid, ip=_client_ip())
     return jsonify(success=True)
-
 
 @app.route("/api/me")
 @csrf.exempt
@@ -2369,7 +2272,6 @@ def api_me():
         return jsonify(error="User not found"), 401
     user["google_linked"] = bool(user.get("google_id"))
     return jsonify(user)
-
 
 @app.route("/api/me/set-password", methods=["POST"])
 @csrf.exempt
@@ -2390,6 +2292,7 @@ def api_set_password():
     user    = _row(_q("SELECT password FROM users WHERE id=?", (user_id,)))
     if not user:
         return jsonify(error="User not found"), 404
+
     if user["password"]:
         if not old_pw:
             return jsonify(error="Current password required"), 400
@@ -2400,7 +2303,6 @@ def api_set_password():
        (generate_password_hash(new_pw), user_id))
     _commit()
     return jsonify(success=True)
-
 
 @app.route("/api/me/update", methods=["POST"])
 @csrf.exempt
@@ -2414,7 +2316,7 @@ def api_me_update():
     username = str(data.get("username", "")).strip()
 
     if len(username) < 2 or len(username) > 50:
-        return jsonify(error="Username must be 2–50 characters"), 400
+        return jsonify(error="Username must be 2-50 characters"), 400
     if username.lower() == _ADMIN_USERNAME.lower():
         return jsonify(error="That username is reserved"), 409
 
@@ -2423,11 +2325,9 @@ def api_me_update():
     _commit()
     return jsonify(success=True, username=username)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Sessions API
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/sessions")
 @csrf.exempt
 @login_required
@@ -2438,7 +2338,6 @@ def api_list_sessions():
         (flask_session["user_id"],),
     ))
     return jsonify(sessions=rows)
-
 
 @app.route("/api/sessions/<sid>", methods=["GET", "PATCH", "DELETE"])
 @csrf.exempt
@@ -2477,7 +2376,6 @@ def api_session(sid):
     _commit()
     return jsonify(success=True)
 
-
 @app.route("/api/sessions/<sid>/title", methods=["PATCH"])
 @csrf.exempt
 @login_required
@@ -2495,7 +2393,6 @@ def api_patch_session_title(sid):
 
     data  = request.get_json(force=True, silent=True) or {}
     title = str(data.get("title", "")).strip()[:100]
-
     if not title:
         return jsonify(error="Title cannot be empty"), 400
     if not _TITLE_RE.match(title):
@@ -2504,7 +2401,6 @@ def api_patch_session_title(sid):
     _q("UPDATE sessions SET title=?,updated_at=? WHERE id=?", (title, _now(), sid))
     _commit()
     return jsonify(success=True, title=title)
-
 
 @app.route("/api/sessions/<sid>/auto-title", methods=["PATCH"])
 @csrf.exempt
@@ -2527,77 +2423,199 @@ def api_auto_title(sid):
     ))
     if first:
         raw   = first["content"]
-        title = (raw[:57] + "…") if len(raw) > 60 else raw
+        title = (raw[:57] + "...") if len(raw) > 60 else raw
         _q("UPDATE sessions SET title=?,updated_at=? WHERE id=?",
            (title, _now(), sid))
         _commit()
     return jsonify(success=True)
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  DONATIONS (Razorpay)
+# ═════════════════════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Donations (Razorpay)
-# ─────────────────────────────────────────────────────────────────────────────
-
-RZP_KEY_ID     = os.environ.get("RAZORPAY_KEY_ID",     "")
-RZP_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+# ── Client Initialisation ───────────────────────────────────────────────────
+RZP_KEY_ID     = os.environ.get("RAZORPAY_KEY_ID",     "").strip()
+RZP_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
 
 _rzp_client = None
+_rzp_status = "not_configured"   # surfaced by /api/health and the debug endpoint
+
 if RZP_KEY_ID and RZP_KEY_SECRET:
     try:
         import razorpay as _rzp_mod
         _rzp_client = _rzp_mod.Client(auth=(RZP_KEY_ID, RZP_KEY_SECRET))
-        log.info("Razorpay ready (key: %s…)", RZP_KEY_ID[:8])
+        # Fail fast on bad creds / clock skew so we know at boot, not at runtime.
+        _rzp_client.set_app_details({"title": "Jarvis AI", "version": "1.0"})
+        _rzp_status = "ready"
+        log.info(
+            "Razorpay ready - key=%s... mode=%s",
+            RZP_KEY_ID[:12],
+            "TEST" if RZP_KEY_ID.startswith("rzp_test_") else "LIVE",
+        )
     except ImportError:
-        log.warning("razorpay not installed — run: pip install razorpay")
+        _rzp_status = "package_missing"
+        log.warning("razorpay package not installed - run: pip install razorpay")
+    except Exception as exc:
+        _rzp_status = f"init_failed: {exc}"
+        log.exception("Razorpay client init failed: %s", exc)
 else:
-    log.warning("RAZORPAY_KEY_ID/SECRET not set — donations disabled")
+    log.warning(
+        "RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not set - donations disabled. "
+        "Get keys at https://dashboard.razorpay.com -> Settings -> API Keys"
+    )
 
+# Donation amount bounds (in paise; 1 INR = 100 paise)
+MIN_DONATION_PAISE =        100      # Rs 1
+MAX_DONATION_PAISE = 50_000_000      # Rs 5,00,000
 
+# ── Create Order ────────────────────────────────────────────────────────────
 @app.route("/api/donations/create-order", methods=["POST"])
 @csrf.exempt
+@limiter.limit("10 per minute; 30 per hour")
 def api_donation_create():
+    """
+    Create a Razorpay order for a donation.
+
+    Request JSON:
+        amount       int  - amount in PAISE (min 100 = Rs 1, max 50_000_000)
+        donor_name   str  - optional, max 120 chars
+        donor_email  str  - optional, valid email
+
+    Response JSON:
+        { order_id, amount, currency, key_id }
+    """
     err = _check_csrf()
     if err:
         return err
 
+    # 1. Gateway must be configured
+    if not _rzp_client:
+        log.error(
+            "Donation attempted but Razorpay not configured (status=%s)",
+            _rzp_status,
+        )
+        return jsonify(
+            error="Payment system is not available right now. "
+                  "Please try again later or contact support."
+        ), 503
+
+    # 2. Parse + validate amount
     data = request.get_json(force=True, silent=True) or {}
     try:
         amount = int(data.get("amount", 0))
     except (ValueError, TypeError):
-        return jsonify(error="Invalid amount"), 400
+        return jsonify(error="Amount must be an integer number of paise"), 400
 
-    if amount < 100:
-        return jsonify(error="Minimum donation ₹1 (100 paise)"), 400
-    if amount > 50_000_000:
-        return jsonify(error="Amount exceeds maximum"), 400
-    if not _rzp_client:
-        return jsonify(error="Payment gateway not configured"), 503
+    if amount < MIN_DONATION_PAISE:
+        return jsonify(error=f"Minimum donation is Rs {MIN_DONATION_PAISE // 100}"), 400
+    if amount > MAX_DONATION_PAISE:
+        return jsonify(error=f"Maximum donation is Rs {MAX_DONATION_PAISE // 100:,}"), 400
 
+    # 3. Optional donor info
+    donor_name  = str(data.get("donor_name",  "")).strip()[:120]
+    donor_email = str(data.get("donor_email", "")).strip().lower()[:254]
+    if donor_email and not VALID_EMAIL_RE.match(donor_email):
+        return jsonify(error="Invalid email address"), 400
+
+    user_id = flask_session.get("user_id")   # None => anonymous donation
+
+    # Short receipt id (Razorpay caps receipt at 40 chars) for reconciliation.
+    local_id = _uid()
+    receipt  = f"don_{local_id}"[:40]
+
+    # 4. Create the order on Razorpay
     try:
-        order   = _rzp_client.order.create(
-            {"amount": amount, "currency": "INR", "payment_capture": 1}
+        order = _rzp_client.order.create({
+            "amount":          amount,
+            "currency":        "INR",
+            "receipt":         receipt,
+            "payment_capture": 1,
+            "notes": {
+                "source":      "jarvis_ai",
+                "user_id":     str(user_id) if user_id else "anonymous",
+                "donor_name":  donor_name or "anonymous",
+                "donor_email": donor_email or "",
+            },
+        })
+    except Exception as exc:
+        log.exception("Razorpay order creation failed: %s", exc)
+        _db_log(
+            "ERROR",
+            f"Razorpay create-order failed: {exc}",
+            "/api/donations/create-order",
+            user_id,
+            ip=_client_ip(),
         )
-        user_id = flask_session.get("user_id")
+        msg = str(exc).lower()
+        if "authentication" in msg or "api key" in msg or "key_id" in msg:
+            return jsonify(
+                error="Payment gateway authentication failed. Please contact support."
+            ), 500
+        if "amount" in msg or "minimum" in msg:
+            return jsonify(error="Invalid amount for payment gateway"), 400
+        return jsonify(error="Could not create payment order. Please try again."), 500
+
+    # Razorpay should always return an id; guard against a malformed response.
+    order_id = order.get("id") if isinstance(order, dict) else None
+    if not order_id:
+        log.error("Razorpay returned no order id: %r", order)
+        return jsonify(error="Payment gateway returned an invalid order."), 502
+
+    # 5. Persist a pending donation record
+    try:
         _q(
             "INSERT INTO donations "
-            "(id,user_id,razorpay_order_id,amount,currency,status,created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (_uid(), user_id, order["id"], amount, "INR", "pending", _now()),
+            "(id, user_id, razorpay_order_id, amount, currency, status, "
+            " donor_name, donor_email, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (
+                local_id,
+                user_id,
+                order_id,
+                amount,
+                "INR",
+                donor_name or None,
+                donor_email or None,
+                _now(),
+            ),
         )
         _commit()
-        return jsonify(
-            order_id=order["id"], amount=order["amount"],
-            currency=order["currency"], key_id=RZP_KEY_ID,
-        )
     except Exception as exc:
-        _db_log("ERROR", f"Razorpay: {exc}", "/api/donations/create-order")
-        return jsonify(error="Could not create payment order"), 500
+        # Order exists on Razorpay but our insert failed; let the user pay and
+        # reconcile in /verify (it backfills unknown orders).
+        log.error("Donation DB insert failed for order %s: %s", order_id, exc)
 
+    _db_log(
+        "INFO",
+        f"Donation order created: {order_id} Rs {amount // 100}",
+        "/api/donations/create-order",
+        user_id,
+        ip=_client_ip(),
+    )
 
+    return jsonify(
+        order_id = order_id,
+        amount   = order.get("amount", amount),
+        currency = order.get("currency", "INR"),
+        key_id   = RZP_KEY_ID,
+    )
+
+# ── Verify Payment ──────────────────────────────────────────────────────────
 @app.route("/api/donations/verify", methods=["POST"])
 @csrf.exempt
 @limiter.limit("10 per minute")
 def api_donation_verify():
+    """
+    Verify a completed Razorpay payment by checking the HMAC signature.
+
+    Request JSON:
+        order_id    str - razorpay_order_id from checkout
+        payment_id  str - razorpay_payment_id from checkout
+        signature   str - razorpay_signature from checkout
+
+    Response JSON:
+        { success: true } on valid signature
+    """
     err = _check_csrf()
     if err:
         return err
@@ -2610,59 +2628,199 @@ def api_donation_verify():
     if not payment_id or not order_id or not signature:
         return jsonify(error="payment_id, order_id and signature required"), 400
     if not _RZPID_RE.match(payment_id) or not _RZPID_RE.match(order_id):
-        return jsonify(error="Invalid ID format"), 400
+        return jsonify(error="Invalid payment/order ID format"), 400
     if not RZP_KEY_SECRET:
         return jsonify(error="Payment gateway not configured"), 503
 
+    # ── Compute expected HMAC signature ───────────────────────────────────
     try:
         expected = _hmac.new(
             key       = RZP_KEY_SECRET.encode(),
             msg       = f"{order_id}|{payment_id}".encode(),
             digestmod = hashlib.sha256,
         ).hexdigest()
-    except Exception:
+    except Exception as exc:
+        log.error("HMAC computation failed: %s", exc)
         return jsonify(error="Internal verification error"), 500
 
+    # ── Compare signatures (constant-time) ────────────────────────────────
     if not _hmac.compare_digest(expected, signature):
-        return jsonify(error="Signature verification failed"), 400
+        log.warning(
+            "Signature mismatch - order=%s payment=%s",
+            order_id, payment_id,
+        )
+        _db_log(
+            "WARN",
+            f"Donation signature mismatch - order={order_id}",
+            "/api/donations/verify",
+            flask_session.get("user_id"),
+            ip=_client_ip(),
+        )
+        # Mark donation as failed for audit trail
+        try:
+            _q(
+                "UPDATE donations SET status='failed' "
+                "WHERE razorpay_order_id=? AND status='pending'",
+                (order_id,),
+            )
+            _commit()
+        except Exception:
+            pass
+        return jsonify(error="Payment signature verification failed"), 400
 
+    # ── Look up donation record ───────────────────────────────────────────
     donation = _row(_q(
-        "SELECT id,status FROM donations WHERE razorpay_order_id=?", (order_id,)
+        "SELECT id, status FROM donations WHERE razorpay_order_id=?",
+        (order_id,),
     ))
+
     if not donation:
-        return jsonify(error="Order not found"), 404
+        # Order verified by Razorpay but we have no DB record - backfill it
+        log.warning("Verifying donation for unknown order %s", order_id)
+        try:
+            _q(
+                "INSERT INTO donations "
+                "(id, user_id, razorpay_order_id, razorpay_payment_id, "
+                " amount, currency, status, created_at) "
+                "VALUES (?, ?, ?, ?, 0, 'INR', 'completed', ?)",
+                (
+                    _uid(),
+                    flask_session.get("user_id"),
+                    order_id,
+                    payment_id,
+                    _now(),
+                ),
+            )
+            _commit()
+        except Exception as exc:
+            log.error("Failed to backfill donation: %s", exc)
+
+        _db_log(
+            "INFO",
+            f"Donation verified (backfilled): order={order_id}",
+            "/api/donations/verify",
+            flask_session.get("user_id"),
+            ip=_client_ip(),
+        )
+        return jsonify(success=True, backfilled=True)
+
     if donation["status"] == "completed":
         return jsonify(success=True, already_verified=True)
     if donation["status"] == "failed":
-        return jsonify(error="Order was marked failed"), 400
+        return jsonify(error="This order was marked failed"), 400
 
+    # ── Mark as completed ─────────────────────────────────────────────────
     _q(
-        "UPDATE donations SET razorpay_payment_id=?,status='completed' "
+        "UPDATE donations "
+        "SET razorpay_payment_id=?, status='completed' "
         "WHERE razorpay_order_id=?",
         (payment_id, order_id),
     )
     _commit()
+
+    _db_log(
+        "INFO",
+        f"Donation verified: order={order_id} payment={payment_id}",
+        "/api/donations/verify",
+        flask_session.get("user_id"),
+        ip=_client_ip(),
+    )
+
+    # ── Send thank-you email ──────────────────────────────────────────────
+    try:
+        full = _row(_q(
+            "SELECT donor_email, donor_name, amount "
+            "FROM donations WHERE razorpay_order_id=?",
+            (order_id,),
+        ))
+        if full and full.get("donor_email"):
+            _send_notification_bg(
+                full["donor_email"],
+                "Thank you for supporting Jarvis AI!",
+                (
+                    f"Hi {full.get('donor_name') or 'friend'},\n\n"
+                    f"Thank you for your generous donation of "
+                    f"Rs {(full['amount'] or 0) // 100}!\n\n"
+                    f"Your support keeps Jarvis AI free and accessible "
+                    f"to everyone.\n\n"
+                    f"Payment ID: {payment_id}\n"
+                    f"Order ID:   {order_id}\n\n"
+                    f"With gratitude,\n"
+                    f"- The Jarvis AI Team"
+                ),
+            )
+    except Exception as exc:
+        log.warning("Thank-you email failed: %s", exc)
+
     return jsonify(success=True)
 
-
+# ── Donation History (per-user) ─────────────────────────────────────────────
 @app.route("/api/donations/history")
 @csrf.exempt
 @login_required
 def api_donation_history():
+    """Return the logged-in user's donation history."""
     rows = _rows(_q(
-        "SELECT razorpay_order_id,razorpay_payment_id,amount,currency,status,created_at "
-        "FROM donations WHERE user_id=? ORDER BY created_at DESC LIMIT 50",
+        "SELECT razorpay_order_id, razorpay_payment_id, "
+        "amount, currency, status, created_at "
+        "FROM donations WHERE user_id=? "
+        "ORDER BY created_at DESC LIMIT 50",
         (flask_session["user_id"],),
     ))
     for r in rows:
-        r["amount_inr"] = r["amount"] // 100
+        r["amount_inr"] = (r["amount"] or 0) // 100
     return jsonify(donations=rows)
 
+# ── Admin Diagnostic Endpoint ───────────────────────────────────────────────
+@app.route("/api/donations/_debug")
+@csrf.exempt
+@admin_required
+def api_donations_debug():
+    """
+    Admin-only diagnostic endpoint.
+    Shows Razorpay configuration status and tests live connectivity.
+    """
+    info = {
+        "status":              _rzp_status,
+        "client_initialised":  bool(_rzp_client),
+        "key_id_set":          bool(RZP_KEY_ID),
+        "key_secret_set":      bool(RZP_KEY_SECRET),
+        "key_id_prefix":       (RZP_KEY_ID[:12] + "...") if RZP_KEY_ID else None,
+        "mode": (
+            "test" if RZP_KEY_ID.startswith("rzp_test_") else
+            "live" if RZP_KEY_ID.startswith("rzp_live_") else
+            "unknown"
+        ),
+    }
+
+    # Try creating a tiny Rs 1 test order to verify the credentials work
+    if _rzp_client:
+        try:
+            test_order = _rzp_client.order.create({
+                "amount":          100,
+                "currency":        "INR",
+                "payment_capture": 1,
+                "notes":           {"source": "debug_endpoint"},
+            })
+            info["test_order_created"] = True
+            info["test_order_id"]      = test_order["id"]
+        except Exception as exc:
+            info["test_order_created"] = False
+            info["test_order_error"]   = str(exc)
+
+    # Pull stats from the database
+    info["stats"] = {
+        "total":     _row(_q("SELECT COUNT(*) AS c FROM donations"))["c"],
+        "pending":   _row(_q("SELECT COUNT(*) AS c FROM donations WHERE status='pending'"))["c"],
+        "completed": _row(_q("SELECT COUNT(*) AS c FROM donations WHERE status='completed'"))["c"],
+        "failed":    _row(_q("SELECT COUNT(*) AS c FROM donations WHERE status='failed'"))["c"],
+    }
+
+    return jsonify(info)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Admin API
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/admin/api/me")
 @csrf.exempt
 @admin_required
@@ -2672,7 +2830,6 @@ def admin_me():
         (flask_session["user_id"],),
     ))
     return jsonify(user)
-
 
 @app.route("/admin/api/stats")
 @csrf.exempt
@@ -2701,7 +2858,6 @@ def admin_stats():
     donation_cnt = _row(_q(
         "SELECT COUNT(*) AS cnt FROM donations WHERE status='completed'"
     ))["cnt"]
-
     uploads_total = _row(_q("SELECT COUNT(*) AS cnt FROM uploads"))["cnt"]
     uploads_size  = _row(_q("SELECT COALESCE(SUM(size),0) AS total FROM uploads"))["total"]
 
@@ -2761,7 +2917,6 @@ def admin_stats():
         ],
     )
 
-
 @app.route("/admin/api/users", methods=["GET", "POST"])
 @csrf.exempt
 @admin_required
@@ -2813,7 +2968,6 @@ def admin_users():
     )
     _commit()
     return jsonify(success=True, id=user_id), 201
-
 
 @app.route("/admin/api/users/<uid_>", methods=["GET", "PATCH", "DELETE"])
 @csrf.exempt
@@ -2888,7 +3042,6 @@ def admin_user(uid_):
     _commit()
     return jsonify(success=True)
 
-
 @app.route("/admin/api/users/<uid_>/reset-password", methods=["POST"])
 @csrf.exempt
 @admin_required
@@ -2896,15 +3049,16 @@ def admin_reset_user_password(uid_):
     err = _check_csrf()
     if err:
         return err
+
     user = _row(_q("SELECT email FROM users WHERE id=?", (uid_,)))
     if not user:
         return jsonify(error="User not found"), 404
+
     new_pw = secrets.token_urlsafe(12)
     _q("UPDATE users SET password=? WHERE id=?",
        (generate_password_hash(new_pw), uid_))
     _commit()
     return jsonify(success=True, temp_password=new_pw)
-
 
 @app.route("/admin/api/sessions")
 @csrf.exempt
@@ -2918,7 +3072,6 @@ def admin_sessions():
            LEFT JOIN messages m ON m.session_id=s.id
            GROUP BY s.id ORDER BY s.updated_at DESC LIMIT 200"""
     )))
-
 
 @app.route("/admin/api/sessions/<sid>", methods=["GET", "DELETE"])
 @csrf.exempt
@@ -2943,7 +3096,6 @@ def admin_session_detail(sid):
     _q("DELETE FROM sessions WHERE id=?", (sid,))
     _commit()
     return jsonify(success=True)
-
 
 @app.route("/admin/api/donations")
 @csrf.exempt
@@ -2978,7 +3130,6 @@ def admin_donations():
     total = sum(r["amount_inr"] for r in rows if r["status"] == "completed")
     return jsonify(donations=rows, total_inr=total)
 
-
 @app.route("/admin/api/uploads")
 @csrf.exempt
 @admin_required
@@ -2994,7 +3145,6 @@ def admin_uploads():
         r["size_kb"] = round(r["size"] / 1024, 1)
     return jsonify(uploads=rows)
 
-
 @app.route("/admin/api/logs")
 @csrf.exempt
 @admin_required
@@ -3005,7 +3155,7 @@ def admin_logs():
         if not 1 <= limit <= 1000:
             raise ValueError
     except (ValueError, TypeError):
-        return jsonify(error="limit must be 1–1000"), 400
+        return jsonify(error="limit must be 1-1000"), 400
 
     FILTER_CLAUSES: Dict[str, Tuple[str, Tuple]] = {
         "all":   ("", ()),
@@ -3039,10 +3189,9 @@ def admin_logs():
         ip_  = f" | ip:{r['ip_address']}" if r["ip_address"]  else ""
         lines.append(
             f"[{r['level']}]  {r['created_at']}  "
-            f"{r['endpoint'] or '—'}{ms_}{uid_}{ip_}  |  {r['message']}"
+            f"{r['endpoint'] or '-'}{ms_}{uid_}{ip_}  |  {r['message']}"
         )
     return jsonify(logs=lines, count=len(lines))
-
 
 @app.route("/admin/api/settings", methods=["GET", "POST"])
 @csrf.exempt
@@ -3089,11 +3238,9 @@ def admin_settings():
         note    = "Runtime settings are read-only. Edit your env vars and redeploy.",
     )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Feedback
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/feedback", methods=["POST"])
 @csrf.exempt
 @limiter.limit("5 per minute; 20 per hour")
@@ -3127,8 +3274,8 @@ def api_submit_feedback():
             f"[Jarvis] New feedback from {name}",
             f"Name:  {name}\nEmail: {email or '(none)'}\nIP: {_client_ip()}\n\n{message}",
         )
-    return jsonify(success=True)
 
+    return jsonify(success=True)
 
 @app.route("/admin/api/feedback")
 @csrf.exempt
@@ -3155,7 +3302,6 @@ def admin_feedback_list():
     unread = _row(_q("SELECT COUNT(*) AS c FROM feedback WHERE is_read=0"))["c"]
     return jsonify(feedback=rows, total=total, unread=unread)
 
-
 @app.route("/admin/api/feedback/<fid>", methods=["DELETE"])
 @csrf.exempt
 @admin_required
@@ -3168,7 +3314,6 @@ def admin_feedback_delete(fid):
     _q("DELETE FROM feedback WHERE id=?", (fid,))
     _commit()
     return jsonify(success=True)
-
 
 @app.route("/admin/api/feedback/<fid>/read", methods=["PATCH"])
 @csrf.exempt
@@ -3185,11 +3330,9 @@ def admin_feedback_mark_read(fid):
     _commit()
     return jsonify(success=True)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Health check
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/health")
 @csrf.exempt
 def api_health():
@@ -3231,11 +3374,9 @@ def api_health():
         ts             = _now(),
     ), 200 if db_ok else 503
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Error handlers
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.errorhandler(404)
 def not_found(_):          return jsonify(error="Not found"), 404
 
@@ -3243,29 +3384,27 @@ def not_found(_):          return jsonify(error="Not found"), 404
 def method_not_allowed(_): return jsonify(error="Method not allowed"), 405
 
 @app.errorhandler(413)
-def too_large(_):          return jsonify(error="File too large — max 10 MB per file"), 413
+def too_large(_):          return jsonify(error="File too large - max 10 MB per file"), 413
 
 @app.errorhandler(415)
 def unsupported_media(_):  return jsonify(error="Unsupported file type"), 415
 
 @app.errorhandler(429)
-def rate_limited(_):       return jsonify(error="Too many requests — slow down"), 429
+def rate_limited(_):       return jsonify(error="Too many requests - slow down"), 429
 
 @app.errorhandler(500)
 def server_error(_):       return jsonify(error="Internal server error"), 500
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     port  = int(os.environ.get("PORT", 5000))
     log.info(
-        "Jarvis AI starting — debug=%s  port=%d  admin='%s'  db=%s",
+        "Jarvis AI starting - debug=%s  port=%d  admin='%s'  db=%s",
         debug, port, _ADMIN_USERNAME, DATABASE_PATH,
     )
     log.info("Models: %s", json.dumps(ALL_MODELS, indent=2))
-    log.info("Upload limits: %d files × %d MB", MAX_FILES, MAX_FILE_SIZE // 1024 // 1024)
+    log.info("Upload limits: %d files x %d MB", MAX_FILES, MAX_FILE_SIZE // 1024 // 1024)
     app.run(host="0.0.0.0", port=port, debug=debug)
