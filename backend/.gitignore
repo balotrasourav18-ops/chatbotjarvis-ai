@@ -1,7 +1,31 @@
+# Environment
 .env
-.env
+.env.*
+!.env.example
+
+# Database
 *.db
-*.sqlite
-venv/
+*.db-wal
+*.db-shm
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+
+# Railway
+.railway/
