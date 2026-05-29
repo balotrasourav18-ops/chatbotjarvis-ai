@@ -2209,4 +2209,5 @@ if __name__ == "__main__":
         "Jarvis AI  |  debug=%s  port=%d  admin='%s'  model=%s  db=%s",
         debug, port, _ADMIN_USERNAME, CHAT_MODEL, DATABASE_PATH,
     )
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=debug)
