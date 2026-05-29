@@ -127,7 +127,6 @@ PyMsgBox
 pyotp
 pyparsing
 pyperclip
-pypiwin32
 PyPrind
 PyRect
 pyroaring
@@ -141,7 +140,6 @@ pyttsx3
 pytweening
 pytz
 pywhatkit
-pywin32
 qrcode
 razorpay
 realtime
