@@ -1,1 +1,1 @@
-web: gunicorn filename:flask_variable
+web: gunicorn backend.app:app
